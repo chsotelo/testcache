@@ -15,8 +15,8 @@ import (
 
 const (
 	// NormalizeVersion versions the normalization algorithm: comments, whitespace and, since
-	// v2, type-only statements.
-	NormalizeVersion = "v2"
+	// v2, type-only statements; since v3, documentation comments and comment-only JSX children.
+	NormalizeVersion = "v3"
 	normCachePrefix  = "norm-" + NormalizeVersion
 	normHashPrefix   = normCachePrefix + ":"
 	rawHashPrefix    = "sha256:"

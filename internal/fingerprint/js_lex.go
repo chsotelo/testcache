@@ -172,7 +172,7 @@ func (l *jsLexer) stepSlash() bool {
 }
 
 func (l *jsLexer) emitOrStripComment(full, body []byte, hasNL bool) {
-	if isMeaningfulComment(body) {
+	if isMeaningfulJSComment(body) {
 		l.trivia.emit(&l.out, full, false)
 		return
 	}

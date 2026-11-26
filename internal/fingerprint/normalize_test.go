@@ -158,7 +158,9 @@ func TestNormalizeMeaningfulCommentsAndHashbang(t *testing.T) {
 		"export const a = 1;\n//# sourceMappingURL=a.js.map",
 		"/*! legal */\nexport const a = 1;",
 		"//! legal\nexport const a = 1;",
-		"// @ts-expect-error\nexport const a = 1;",
+		"//@ sourceMappingURL=a.js.map\nexport const a = 1;",
+		"// @jsx h\nexport const a = 1;",
+		"/** @param x\n * @custom-plugin-flag */\nexport const a = 1;",
 	}
 	base := "export const a = 1;"
 	for _, src := range meaningful {
@@ -265,5 +267,57 @@ func TestNormalizeNonSourceAndDisabledSwitch(t *testing.T) {
 	h2, _ := h.HashDependency(tsPath)
 	if h1 == h2 {
 		t.Fatalf("expected NormalizeHash=false to treat comment edit as changed")
+	}
+}
+
+// Documentation comments change nothing at run time, whatever tags they hold: editing them
+// keeps the cache. Type-checker directives only matter to --typecheck, which is not cached.
+func TestNormalizeDocumentationCommentsAreStripped(t *testing.T) {
+	base := "export function cn(a) { return a; }"
+	for _, src := range []string{
+		"/**\n * Merges class names.\n * @param {...any} a class values\n * @returns {string}\n */\nexport function cn(a) { return a; }",
+		"// @ts-check\nexport function cn(a) { return a; }",
+		"// @ts-expect-error\nexport function cn(a) { return a; }",
+		"/** @type {import('./x').T} @see https://example.com/a#b */\nexport function cn(a) { return a; }",
+		"// ask name@example.com, see issue #123\nexport function cn(a) { return a; }",
+		"/** @deprecated use cx. @since 1.2 @example cn('a') */\nexport function cn(a) { return a; }",
+	} {
+		mustNormEqual(t, "src/utils.js", base, src)
+	}
+	// CSS keeps the conservative rule.
+	mustNormDiff(t, "styles/a.css", ".a { color: red; }", "/* @param x */\n.a { color: red; }")
+}
+
+// A {/* comment */} child alone on its line renders nothing: adding or removing one keeps the
+// cache. Next to text on the same line it separates two text children, so it still counts.
+func TestNormalizeCommentOnlyJSXChildren(t *testing.T) {
+	for _, p := range []string{"src/Table.jsx", "src/Table.tsx", "src/Table.js"} {
+		mustNormEqual(t, p,
+			"export const T = () => (\n  <div>\n    <span>a</span>\n  </div>\n);",
+			"export const T = () => (\n  <div>\n    {/* Table container */}\n    <span>a</span>\n    {/* multi\n       line */}\n    {// line comment\n    }\n  </div>\n);",
+		)
+		mustNormDiff(t, p,
+			"export const T = () => <div>foo  bar</div>;",
+			"export const T = () => <div>foo {/* c */} bar</div>;",
+		)
+		mustNormDiff(t, p,
+			"export const T = () => (\n  <div>\n    <span>a</span>\n  </div>\n);",
+			"export const T = () => (\n  <div>\n    {/* @vite-ignore */}\n    <span>a</span>\n  </div>\n);",
+		)
+		// Between two lines of one text it splits that text into two children.
+		mustNormDiff(t, p,
+			"export const T = () => (\n  <p>\n    first line\n    second line\n  </p>\n);",
+			"export const T = () => (\n  <p>\n    first line\n    {/* c */}\n    second line\n  </p>\n);",
+		)
+		// Next to text on one side and a tag on the other it renders nothing.
+		mustNormEqual(t, p,
+			"export const T = () => (\n  <p>\n    first line\n    <b>x</b>\n  </p>\n);",
+			"export const T = () => (\n  <p>\n    first line\n    {/* c */}\n    <b>x</b>\n  </p>\n);",
+		)
+		// An expression is not a comment.
+		mustNormDiff(t, p,
+			"export const T = () => (\n  <div>\n    <span>a</span>\n  </div>\n);",
+			"export const T = () => (\n  <div>\n    {/* c */ x}\n    <span>a</span>\n  </div>\n);",
+		)
 	}
 }

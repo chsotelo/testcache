@@ -103,12 +103,56 @@ function isInsideRanges(pos, ranges) {
   return ranges.some(([s, e]) => pos >= s && pos < e);
 }
 
+// CSS keeps the conservative rule: any '@' or '#'.
 function isMeaningfulCommentText(val) {
   return val.startsWith('!') || val.includes('@') || val.includes('#');
 }
 
+// Mirrors docTags and hashDirectives in internal/fingerprint/comment_pragma.go.
+const DOC_TAGS = new Set(('param arg argument returns return type typedef template typeparam property prop callback ' +
+  'example deprecated see link linkcode linkplain throws exception description desc summary remarks default ' +
+  'defaultvalue since version author todo private public protected internal readonly override abstract async ' +
+  'constant const enum function func method class constructor extends augments implements interface member ' +
+  'memberof module namespace name inheritdoc ignore kind static this yields yield fires emits event listens ' +
+  'requires file fileoverview overview global inner instance access alias satisfies import category beta alpha ' +
+  'experimental sealed virtual copyright ts-check ts-nocheck ts-ignore ts-expect-error').split(' '));
+const HASH_DIRECTIVES = ['__', ' sourceMappingURL', 'sourceMappingURL', ' sourceURL', 'sourceURL'];
+
+function isMeaningfulJsCommentText(val) {
+  if (val.startsWith('!')) return true;
+  for (let i = 0; i < val.length; i++) {
+    if (val[i] === '@') {
+      if (i > 0 && /[A-Za-z0-9_-]/.test(val[i - 1])) continue;
+      let j = i + 1;
+      while (j < val.length && /[A-Za-z0-9_-]/.test(val[j])) j++;
+      if (j === i + 1 || !DOC_TAGS.has(val.slice(i + 1, j).toLowerCase())) return true;
+      i = j - 1;
+    } else if (val[i] === '#' && HASH_DIRECTIVES.some((d) => val.startsWith(d, i + 1))) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// A {/* ... */} child on its own line after every JSX text that holds a line break.
+function insertJsxLineComments(src, program, Visitor) {
+  const at = [];
+  new Visitor({
+    JSXText(node) {
+      const nl = src.slice(node.start, node.end).indexOf('\n');
+      if (nl >= 0) at.push(node.start + nl + 1);
+    },
+  }).visit(program);
+  if (at.length === 0) return null;
+  let out = src;
+  for (const pos of at.sort((a, b) => b - a)) {
+    out = `${out.slice(0, pos)}{/* oracle-jsx */}\n${out.slice(pos)}`;
+  }
+  return out;
+}
+
 function removeNormalComments(src, comments) {
-  const normal = comments.filter((c) => !isMeaningfulCommentText(c.value)).sort((a, b) => a.start - b.start);
+  const normal = comments.filter((c) => !isMeaningfulJsCommentText(c.value)).sort((a, b) => a.start - b.start);
   if (normal.length === 0) return null;
   let out = '';
   let prev = 0;
@@ -162,6 +206,8 @@ function generateJsVariants(src, parsed, Visitor) {
   const noComments = removeNormalComments(src, parsed.comments || []);
   if (noComments !== null) variants.push({ name: 'rm_comments', code: noComments });
   variants.push({ name: 'ins_comments', code: insertSafeComments(src, parsed.program) });
+  const jsxComments = insertJsxLineComments(src, parsed.program, Visitor);
+  if (jsxComments !== null) variants.push({ name: 'ins_jsx_comments', code: jsxComments });
   const wsMut = mutateMultilineWhitespace(src, noWsRanges);
   if (wsMut !== null) variants.push({ name: 'ws_multiline', code: wsMut });
   const strMut = mutateOneString(src, firstStr);
@@ -188,7 +234,11 @@ function generateCssVariants(src) {
 
 async function transformNormalizedJs(vite, rolldownUtils, filename, code) {
   try {
-    const res = await vite.transformWithOxc(code, filename, { sourcemap: false });
+    // JSX compiled the way it runs: whitespace with a line break between children is not text.
+    const res = await vite.transformWithOxc(code, filename, {
+      sourcemap: false,
+      jsx: { runtime: 'automatic', development: false },
+    });
     const jsName = filename.replace(/\.(tsx?|mts|cts)$/i, '.js');
     const min = rolldownUtils.minifySync(jsName, res.code, {
       compress: false,

@@ -139,6 +139,9 @@ func (l *jsLexer) stepJSXChildren() {
 		return
 	}
 	b := l.src[l.pos]
+	if b == '{' && l.skipCommentOnlyJSXChild() {
+		return
+	}
 	if b == '{' {
 		l.trivia.emit(&l.out, l.src[l.pos:l.pos+1], false)
 		l.stack = append(l.stack, lexFrame{kind: frameJSXExpr, returnMode: modeJSXChildren})
@@ -159,6 +162,78 @@ func (l *jsLexer) stepJSXChildren() {
 	end := scanJSXTextEnd(l.src, l.pos)
 	l.trivia.emit(&l.out, l.src[l.pos:end], false)
 	l.pos = end
+}
+
+// skipCommentOnlyJSXChild drops a `{/* ... */}` child that is alone on its line next to a
+// tag or an expression. JSX removes whitespace that contains a line break, so that child and
+// its braces render nothing either way. Between two pieces of text it stays: the lines of one
+// text are joined into a single child, and the comment splits them into two.
+func (l *jsLexer) skipCommentOnlyJSXChild() bool {
+	if !l.trivia.hasNewline {
+		return false
+	}
+	end, hasNL, ok := scanCommentOnlyBraces(l.src, l.pos)
+	if !ok {
+		return false
+	}
+	next, nl, ok := matchJSWhitespace(l.src, end)
+	if !ok || !nl {
+		return false
+	}
+	if !l.afterJSXTagOrExpr() && !beforeJSXTagOrExpr(l.src, next) {
+		return false
+	}
+	l.trivia.addComment(hasNL)
+	l.pos = end
+	return true
+}
+
+// JSX text cannot hold '>' or '}': output ending in one of them ends with a tag or an
+// expression, not with text.
+func (l *jsLexer) afterJSXTagOrExpr() bool {
+	out := l.out.Bytes()
+	if len(out) == 0 {
+		return false
+	}
+	last := out[len(out)-1]
+	return last == '>' || last == '}'
+}
+
+func beforeJSXTagOrExpr(src []byte, pos int) bool {
+	return pos < len(src) && (src[pos] == '<' || src[pos] == '{')
+}
+
+// scanCommentOnlyBraces matches `{` comments and whitespace `}` at pos, where every comment
+// can be stripped, and returns the offset after the closing brace.
+func scanCommentOnlyBraces(src []byte, pos int) (end int, hasNL bool, ok bool) {
+	i := pos + 1
+	for i < len(src) {
+		if next, nl, isWS := matchJSWhitespace(src, i); isWS {
+			hasNL = hasNL || nl
+			i = next
+			continue
+		}
+		switch {
+		case src[i] == '}':
+			return i + 1, hasNL, true
+		case i+1 < len(src) && src[i] == '/' && src[i+1] == '*':
+			cEnd, closed := scanBlockComment(src, i)
+			if !closed || isMeaningfulJSComment(src[i+2:cEnd-2]) {
+				return 0, false, false
+			}
+			hasNL = hasNL || containsNewline(src[i+2:cEnd-2])
+			i = cEnd
+		case i+1 < len(src) && src[i] == '/' && src[i+1] == '/':
+			cEnd := scanLineEnd(src, i+2)
+			if isMeaningfulJSComment(src[i+2 : cEnd]) {
+				return 0, false, false
+			}
+			i = cEnd
+		default:
+			return 0, false, false
+		}
+	}
+	return 0, false, false
 }
 
 func (l *jsLexer) enterNestedJSX() {
