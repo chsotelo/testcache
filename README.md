@@ -10,7 +10,10 @@
 - **Safe by default.** A file that spawns processes, opens network connections, reads files modified during the run, or runs with `isolate: false` is never cached. A small sample of hits is re-run to catch flaky or under-tracked tests, and `tc verify` re-checks the whole cache before a merge.
 - **A single Go binary**, standard library only. Works with Vitest 3.x, 4.x and 5.x, npm, pnpm and yarn.
 
-Example from a real 1,248-file suite: the full run takes about 5 minutes cold; after editing a few modules, the next full run took **19 s**, with 1,208 files replayed from the cache and 40 run.
+Measured on real projects:
+
+- **Locally**, a 1,248-file suite: the full run takes about 5 minutes cold; after editing a few modules, the next full run took **19 s**, with 1,208 files replayed from the cache and 40 run.
+- **In CI**, a React app with 563 test files in two Vitest 3 configs, on a pool of self-hosted GitHub Actions runners: the two test steps took **3 min 38 s** cold and **1 min 08 s** on the next push, which brought in 7 new commits with changes to shared components and 5 more test files; of the 568 files, 465 were replayed and 103 run (see [In CI](#in-ci)).
 
 ```text
  Test Files  156 passed (156) [tc total: 144 cached + 12 run]
