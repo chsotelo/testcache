@@ -69,6 +69,9 @@ var bypassFlags = map[string]bool{
 	"--lastFailed": true, "--sinceLastRun": true,
 	// A module served from Vitest's on-disk transform cache is invisible to tc.
 	"--fsModuleCache": true,
+	// Vitest splits the files it is given: each shard would replay every cached file and
+	// split a different set of misses, so a file could run in no shard at all.
+	"--shard": true,
 }
 
 var bypassSubcommands = map[string]bool{
