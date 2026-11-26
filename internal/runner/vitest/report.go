@@ -21,6 +21,7 @@ type runSummary struct {
 	cachedFiles int
 	runFiles    int
 	savedMs     int64
+	shard       shardSpec
 }
 
 // resultTally counts test files and tests by outcome. known is false when the numbers could
@@ -155,11 +156,15 @@ func printRunSummary(w io.Writer, s runSummary) {
 		fileWord = "file"
 	}
 	savedSec := float64(s.savedMs) / 1000.0
+	prefix := "tc: "
+	if s.shard.active() {
+		prefix = "tc: shard " + s.shard.String() + ": "
+	}
 	if s.savedMs > 0 && s.savedMs < 1000 {
-		fmt.Fprintf(w, "tc: %d %s, %d cached, %d run, saved %.2fs\n", s.totalFiles, fileWord, s.cachedFiles, s.runFiles, savedSec)
+		fmt.Fprintf(w, "%s%d %s, %d cached, %d run, saved %.2fs\n", prefix, s.totalFiles, fileWord, s.cachedFiles, s.runFiles, savedSec)
 		return
 	}
-	fmt.Fprintf(w, "tc: %d %s, %d cached, %d run, saved %.1fs\n", s.totalFiles, fileWord, s.cachedFiles, s.runFiles, savedSec)
+	fmt.Fprintf(w, "%s%d %s, %d cached, %d run, saved %.1fs\n", prefix, s.totalFiles, fileWord, s.cachedFiles, s.runFiles, savedSec)
 }
 
 // printCachedHint explains "(cached)" whenever the run replayed at least one file.

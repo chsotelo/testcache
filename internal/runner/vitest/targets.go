@@ -50,7 +50,11 @@ func DiscoverTargets(ctx context.Context, req DiscoverRequest) (DiscoveryResult,
 		return DiscoveryResult{}, err
 	}
 
-	return partitionDiscoveredFiles(req, disc), nil
+	res := partitionDiscoveredFiles(req, disc)
+	if req.Parsed.Shard.active() {
+		res = applyShard(res, projRoot, req.Parsed.Shard, req.Env.proj.VitestVersion)
+	}
+	return res, nil
 }
 
 type discoveredSet struct {

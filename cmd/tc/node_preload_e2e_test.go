@@ -52,6 +52,14 @@ func runVitestBin(t *testing.T, preload string, run preloadRun) preloadResult {
 	if _, err := exec.LookPath("node"); err != nil {
 		t.Skip("node is not installed")
 	}
+	// A sampled revalidation would turn a warm hit into a run: these runs must be exact.
+	userConfig := filepath.Join(run.cacheDir, "no-user-config")
+	if err := os.MkdirAll(userConfig, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(userConfig, "config.json"), []byte(`{"revalidateRate":0}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	args := append([]string{filepath.Join(run.proj, "node_modules", ".bin", "vitest")}, run.args...)
 	cmd := exec.Command("node", args...)
 	cmd.Dir = run.proj

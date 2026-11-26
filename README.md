@@ -131,6 +131,25 @@ Install the binary only, and keep the cache directory between jobs with your CI'
 
 Each job restores the newest cache and saves its own under a new key. A fresh clone, a fresh `node_modules` and a new runner do not matter: keys are built from content and repo-relative paths, and the Node binary is identified by its version. The repository is identified by where its checkout lives, which is the same from one job to the next on GitHub-hosted runners, GitLab CI and CircleCI. A pool of self-hosted runners usually clones into a different directory per runner: set `TESTCACHE_REPO_ID` (for example to `${{ github.repository }}`) so every clone uses the same cache, and give `actions/cache` a `path` that is the same on every runner, since its cache version depends on it. `CI=true` is part of every key, so CI and local runs keep separate entries. Pin a release with `TESTCACHE_VERSION=v1.2.3` in the environment of the install step.
 
+**Which cache a run starts from.** On GitHub Actions a cache saved by a pull request is visible to later runs of that pull request only; a new pull request sees the caches of its base branch. If the workflow runs on pull requests only, every first run of a pull request is cold. Run it on pushes to the base branch too (`on: push: branches: [main]`): that run is incremental, since it starts from the previous push's cache, and it stores the cache every new pull request starts from. Only code that reached the base branch writes that shared cache: a pull request cannot put results into another one's.
+
+**Shards.** `tc vitest run --shard=<index>/<count>` gives each shard the files Vitest's default sequencer would give it: the files sorted by the SHA-1 of their path, cut into `count` ranges (Vitest 3 and Vitest 4+ cut them differently, and tc follows the installed version). Each shard replays its own cached files and hands only its own uncached ones to Vitest, as a file list without `--shard`. The split depends on the file list alone, never on what a shard has cached, so the shards cover every file exactly once even when their caches differ. `--shard` is not part of any key: a result stored by one shard serves another one, a run without shards and a local run alike. With more shards than files tc hands the run to Vitest unchanged, which reports the error. A config with its own sequencer (`sequence.sequencer`) gets the default split: every file is still covered exactly once, but a shard may hold other files than that sequencer would give it. Keep one cache per shard:
+
+```yaml
+strategy:
+  matrix:
+    shard: [1, 2, 3, 4]
+steps:
+  # checkout, Node and dependencies as usual, then:
+  - run: curl -fsSL https://raw.githubusercontent.com/chsotelo/testcache/main/scripts/get.sh | sh -s -- --no-integrations
+  - uses: actions/cache@v4
+    with:
+      path: ~/.cache/testcache
+      key: testcache-shard${{ matrix.shard }}-${{ github.sha }}
+      restore-keys: testcache-shard${{ matrix.shard }}-
+  - run: ~/.local/bin/tc vitest run --shard=${{ matrix.shard }}/4
+```
+
 ---
 
 ## Commands
@@ -455,7 +474,7 @@ What stays per checkout: the limit on concurrent Vitest runs (`maxConcurrentRuns
 - **Glob contents during a run**: `import.meta.glob` listings are compared before and after the run, but files matched by a glob with a `query` are not checked against the two-second rule.
 - **`tc` killed by `SIGKILL` while queued or running**: nothing is cached and locks are released by the kernel; Vitest stops through its parent watchdog (see above). A test that itself detaches a child into another process group can leave that child behind.
 - **Arguments after a bare `--`** are dropped, as Vitest itself ignores them.
-- **Passthrough flags & subcommands**: `--watch`/`-w`, `--ui`, `--update`/`-u`, `--coverage`, `--typecheck`, `--changed`, `--lastFailed`, `--sinceLastRun`, `--fsModuleCache`, `--browser`, `--shard`, `--mergeReports`, `--no-isolate`, `--isolate=false`, `--help`, `--version`, and subcommands `watch`, `bench`, `list`, `typecheck`, `init` pass directly through to Vitest uncached, and so does `related` without `--run` (it watches on a terminal).
+- **Passthrough flags & subcommands**: `--watch`/`-w`, `--ui`, `--update`/`-u`, `--coverage`, `--typecheck`, `--changed`, `--lastFailed`, `--sinceLastRun`, `--fsModuleCache`, `--browser`, `--mergeReports`, `--no-isolate`, `--isolate=false`, `--help`, `--version`, and subcommands `watch`, `bench`, `list`, `typecheck`, `init` pass directly through to Vitest uncached, and so does `related` without `--run` (it watches on a terminal).
 - **`vitest related <sources> --run`** (what lint-staged and commit hooks run) is cached. A cached file is replayed when a source is the test, a file its passing run executed, or a file under one of its `import.meta.glob` directories; `package.json` and `vite.config.*`/`vitest.config.*` select every test, as Vitest's default `forceRerunTriggers` do. The files without a cached pass go to Vitest with the sources, and Vitest picks the ones that import a source. Two differences from plain Vitest, neither of which changes a result: a cached test that only imports a source without executing it is not listed, and custom `forceRerunTriggers` are not read, so a trigger of your own reruns only the uncached tests. When none of those is related, Vitest prints `No test files found` with the files it was given before `tc` lists the cached ones.
 - **Workspaces / browser mode**: multi-project `test.projects` configs and browser-mode tests run through `tc` but are never cached.
 - **Vitest's transform cache is off under `tc`**: on Vitest 5 a file that does have to run pays the full transform again instead of reading `node_modules/.vitest-cache`.

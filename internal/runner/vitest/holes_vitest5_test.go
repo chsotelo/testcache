@@ -2,6 +2,7 @@ package vitest
 
 import (
 	"os"
+	"strings"
 	"testing"
 )
 
@@ -23,21 +24,29 @@ func TestParseArgsVitest5Flags(t *testing.T) {
 	}
 }
 
-// Vitest shards the files it is handed. Through tc that is the misses only, a different set
-// in every shard, so a file could fall outside every shard: --shard goes straight to Vitest.
-func TestParseArgsShardBypassesCache(t *testing.T) {
+// tc applies --shard itself (see ownedByShard): the flag never reaches Vitest, whose own
+// split of the misses would differ from shard to shard, and is not part of any cache key. A
+// value Vitest would reject goes to Vitest unchanged.
+func TestParseArgsShard(t *testing.T) {
 	for _, args := range [][]string{
 		{"run", "--shard=1/3"},
 		{"run", "--shard", "2/3", "tests/a.test.ts"},
 	} {
 		parsed := ParseArgs(args)
-		if !parsed.BypassCache {
-			t.Fatalf("%v must go straight to Vitest", args)
+		if parsed.BypassCache || !parsed.Shard.active() {
+			t.Fatalf("%v must be handled by tc, got %+v", args, parsed)
 		}
-		for _, p := range parsed.Positionals {
-			if p == "2/3" {
-				t.Fatalf("the shard value must not become a test file: %v", parsed.Positionals)
+		for _, list := range [][]string{parsed.ForwardFlags, parsed.CacheableFlags, parsed.Positionals} {
+			for _, a := range list {
+				if strings.Contains(a, "shard") || a == "2/3" {
+					t.Fatalf("%v: --shard must not reach Vitest or a key: %+v", args, parsed)
+				}
 			}
+		}
+	}
+	for _, bad := range []string{"--shard=0/3", "--shard=4/3", "--shard=a/b", "--shard=3"} {
+		if parsed := ParseArgs([]string{"run", bad}); !parsed.BypassCache {
+			t.Fatalf("%s must go to Vitest, which reports it", bad)
 		}
 	}
 }

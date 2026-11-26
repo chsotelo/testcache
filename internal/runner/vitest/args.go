@@ -29,6 +29,9 @@ type ParsedArgs struct {
 	// source, and the positionals are those sources instead of test filters.
 	Related        bool
 	RelatedSources []string
+	// Shard is `--shard <index>/<count>`, which tc applies itself to the full file list (see
+	// ownedByShard); it is neither passed to Vitest nor part of a cache key.
+	Shard          shardSpec
 	ForwardFlags   []string
 	CacheableFlags []string
 	DiscoveryFlags []string
@@ -69,9 +72,6 @@ var bypassFlags = map[string]bool{
 	"--lastFailed": true, "--sinceLastRun": true,
 	// A module served from Vitest's on-disk transform cache is invisible to tc.
 	"--fsModuleCache": true,
-	// Vitest splits the files it is given: each shard would replay every cached file and
-	// split a different set of misses, so a file could run in no shard at all.
-	"--shard": true,
 }
 
 var bypassSubcommands = map[string]bool{
@@ -179,6 +179,14 @@ func parseFlag(out *ParsedArgs, args []string, i int) int {
 		val = args[i+1]
 		i++
 		consumedNext = true
+	}
+	if name == "--shard" {
+		if s, ok := parseShard(val); ok {
+			out.Shard = s
+			return i
+		}
+		// Vitest reports the malformed value itself.
+		out.BypassCache = true
 	}
 	if name == "--isolate" && val == "false" {
 		out.BypassCache = true
