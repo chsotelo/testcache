@@ -1,0 +1,249 @@
+package fingerprint
+
+func (l *jsLexer) stepMaybeJSX() bool {
+	res := tryParseJSXStart(l.src, l.pos)
+	switch res.kind {
+	case jsxNotJSX:
+		return false
+	case jsxAmbiguous:
+		l.fail("ambiguous jsx tag")
+		return true
+	case jsxFragment:
+		l.trivia.emit(&l.out, l.src[l.pos:l.pos+2], false)
+		l.stack = append(l.stack, lexFrame{kind: frameJSXElem, returnMode: l.mode})
+		l.mode = modeJSXChildren
+		l.pos += 2
+		return true
+	case jsxOpenTag:
+		return l.enterJSXOpenTag(res)
+	default:
+		return false
+	}
+}
+
+func (l *jsLexer) enterJSXOpenTag(res jsxStartResult) bool {
+	l.trivia.emit(&l.out, l.src[l.pos:res.afterName], false)
+	l.pos = res.afterName
+	if res.typeArgsEnd > res.typeArgsStart {
+		norm := normalizeJS(l.src[res.typeArgsStart:res.typeArgsEnd], false)
+		if !norm.OK {
+			l.fail("ambiguous jsx generic type args")
+			return true
+		}
+		l.trivia.emit(&l.out, norm.Data, false)
+		l.pos = res.typeArgsEnd
+	}
+	l.stack = append(l.stack, lexFrame{
+		kind:       frameJSXElem,
+		tagName:    res.tagName,
+		returnMode: l.mode,
+	})
+	l.mode = modeJSXTag
+	return true
+}
+
+func (l *jsLexer) stepJSXTag() {
+	if next, hasNL, ok := matchJSWhitespace(l.src, l.pos); ok {
+		l.trivia.addWhitespace(l.src[l.pos:next], hasNL)
+		l.pos = next
+		return
+	}
+	b := l.src[l.pos]
+	if b == '/' && l.stepJSXTagSlash() {
+		return
+	}
+	if b == '>' {
+		l.trivia.emit(&l.out, l.src[l.pos:l.pos+1], false)
+		l.mode = modeJSXChildren
+		l.pos++
+		return
+	}
+	if b == '"' || b == '\'' {
+		l.stepJSXAttrString(b)
+		return
+	}
+	if b == '{' {
+		l.trivia.emit(&l.out, l.src[l.pos:l.pos+1], false)
+		l.stack = append(l.stack, lexFrame{kind: frameJSXExpr, returnMode: modeJSXTag})
+		l.mode = modeCode
+		l.prevTok = tokStart
+		l.stmtHdr = ""
+		l.pos++
+		return
+	}
+	if b == '<' {
+		l.fail("unexpected < in jsx opening tag")
+		return
+	}
+	end := scanJSXTagAtomEnd(l.src, l.pos)
+	l.trivia.emit(&l.out, l.src[l.pos:end], false)
+	l.pos = end
+}
+
+func (l *jsLexer) stepJSXTagSlash() bool {
+	if l.pos+1 >= len(l.src) {
+		l.fail("unterminated jsx tag")
+		return true
+	}
+	nb := l.src[l.pos+1]
+	if nb == '>' {
+		if len(l.stack) == 0 || l.stack[len(l.stack)-1].kind != frameJSXElem {
+			l.fail("unexpected /> without jsx element")
+			return true
+		}
+		top := l.stack[len(l.stack)-1]
+		l.stack = l.stack[:len(l.stack)-1]
+		l.trivia.emit(&l.out, l.src[l.pos:l.pos+2], false)
+		l.pos += 2
+		l.restoreAfterJSXElem(top.returnMode)
+		return true
+	}
+	if nb == '/' {
+		end := scanLineEnd(l.src, l.pos+2)
+		l.emitOrStripComment(l.src[l.pos:end], l.src[l.pos+2:end], false)
+		l.pos = end
+		return true
+	}
+	if nb == '*' {
+		end, ok := scanBlockComment(l.src, l.pos)
+		if !ok {
+			l.fail("unterminated comment in jsx tag")
+			return true
+		}
+		body := l.src[l.pos+2 : end-2]
+		l.emitOrStripComment(l.src[l.pos:end], body, containsNewline(body))
+		l.pos = end
+		return true
+	}
+	l.fail("unexpected / in jsx opening tag")
+	return true
+}
+
+func (l *jsLexer) stepJSXAttrString(quote byte) {
+	i := l.pos + 1
+	for i < len(l.src) && l.src[i] != quote {
+		i++
+	}
+	if i >= len(l.src) {
+		l.fail("unterminated jsx attribute string")
+		return
+	}
+	l.trivia.emit(&l.out, l.src[l.pos:i+1], false)
+	l.pos = i + 1
+}
+
+func (l *jsLexer) stepJSXChildren() {
+	if next, hasNL, ok := matchJSWhitespace(l.src, l.pos); ok {
+		l.trivia.addWhitespace(l.src[l.pos:next], hasNL)
+		l.pos = next
+		return
+	}
+	b := l.src[l.pos]
+	if b == '{' {
+		l.trivia.emit(&l.out, l.src[l.pos:l.pos+1], false)
+		l.stack = append(l.stack, lexFrame{kind: frameJSXExpr, returnMode: modeJSXChildren})
+		l.mode = modeCode
+		l.prevTok = tokStart
+		l.stmtHdr = ""
+		l.pos++
+		return
+	}
+	if b == '<' {
+		if l.pos+1 < len(l.src) && l.src[l.pos+1] == '/' {
+			l.scanJSXClosingTag()
+			return
+		}
+		l.enterNestedJSX()
+		return
+	}
+	end := scanJSXTextEnd(l.src, l.pos)
+	l.trivia.emit(&l.out, l.src[l.pos:end], false)
+	l.pos = end
+}
+
+func (l *jsLexer) enterNestedJSX() {
+	res := tryParseJSXStart(l.src, l.pos)
+	switch res.kind {
+	case jsxFragment:
+		l.trivia.emit(&l.out, l.src[l.pos:l.pos+2], false)
+		l.stack = append(l.stack, lexFrame{kind: frameJSXElem, returnMode: l.mode})
+		l.mode = modeJSXChildren
+		l.pos += 2
+	case jsxOpenTag:
+		l.enterJSXOpenTag(res)
+	default:
+		l.fail("ambiguous nested jsx element")
+	}
+}
+
+func (l *jsLexer) scanJSXClosingTag() {
+	if len(l.stack) == 0 || l.stack[len(l.stack)-1].kind != frameJSXElem {
+		l.fail("unexpected jsx closing tag")
+		return
+	}
+	top := l.stack[len(l.stack)-1]
+	l.trivia.emit(&l.out, l.src[l.pos:l.pos+2], false)
+	l.pos += 2
+	if !l.consumeJSXTrivia() {
+		return
+	}
+	tagName := ""
+	if l.pos < len(l.src) && l.src[l.pos] != '>' {
+		nameEnd := scanJSXTagNameEnd(l.src, l.pos)
+		if nameEnd == l.pos {
+			l.fail("invalid jsx closing tag name")
+			return
+		}
+		tagName = string(l.src[l.pos:nameEnd])
+		l.trivia.emit(&l.out, l.src[l.pos:nameEnd], false)
+		l.pos = nameEnd
+		if !l.consumeJSXTrivia() {
+			return
+		}
+	}
+	if l.pos >= len(l.src) || l.src[l.pos] != '>' || tagName != top.tagName {
+		l.fail("mismatched jsx closing tag")
+		return
+	}
+	l.trivia.emit(&l.out, l.src[l.pos:l.pos+1], false)
+	l.pos++
+	l.stack = l.stack[:len(l.stack)-1]
+	l.restoreAfterJSXElem(top.returnMode)
+}
+
+func (l *jsLexer) consumeJSXTrivia() bool {
+	for l.pos < len(l.src) {
+		if next, hasNL, ok := matchJSWhitespace(l.src, l.pos); ok {
+			l.trivia.addWhitespace(l.src[l.pos:next], hasNL)
+			l.pos = next
+			continue
+		}
+		if l.pos+1 < len(l.src) && l.src[l.pos] == '/' && l.src[l.pos+1] == '/' {
+			end := scanLineEnd(l.src, l.pos+2)
+			l.emitOrStripComment(l.src[l.pos:end], l.src[l.pos+2:end], false)
+			l.pos = end
+			continue
+		}
+		if l.pos+1 < len(l.src) && l.src[l.pos] == '/' && l.src[l.pos+1] == '*' {
+			end, ok := scanBlockComment(l.src, l.pos)
+			if !ok {
+				l.fail("unterminated comment in jsx closing tag")
+				return false
+			}
+			body := l.src[l.pos+2 : end-2]
+			l.emitOrStripComment(l.src[l.pos:end], body, containsNewline(body))
+			l.pos = end
+			continue
+		}
+		break
+	}
+	return true
+}
+
+func (l *jsLexer) restoreAfterJSXElem(retMode lexMode) {
+	l.mode = retMode
+	if retMode == modeCode {
+		l.prevTok = tokExprEnd
+		l.stmtHdr = ""
+	}
+}

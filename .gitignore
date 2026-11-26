@@ -1,0 +1,6 @@
+node_modules/
+.bench-bin.*
+testdata/.tmp-e2e-*
+/tc
+docs/recovery/
+dist/

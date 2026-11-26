@@ -1,0 +1,10 @@
+/* header comment */
+.card {
+  color: #112233;
+  background: url("http://example.com/a/*b*/.png");
+  content: "/* keep string */";
+}
+
+.parent .child {
+  margin: 0;
+}

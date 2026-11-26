@@ -1,0 +1,39 @@
+name: release
+
+# Pushing a tag such as v1.2.3 runs the tests, builds the binaries and attaches them to a
+# GitHub release.
+on:
+  push:
+    tags: ["v*.*.*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Tests (Vitest 4 and Vitest 5 fixtures)
+        run: |
+          (cd testdata/fixture-vitest && npm ci)
+          (cd testdata/fixture-vitest5 && npm ci)
+          go test ./...
+          TC_TEST_FIXTURE=fixture-vitest5 go test ./...
+
+      - name: Build artifacts
+        run: ./scripts/release.sh "$GITHUB_REF_NAME"
+
+      - name: GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" dist/*.tar.gz dist/checksums.txt --generate-notes
