@@ -1,6 +1,9 @@
 package vitest
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 // Vitest 3 resolves every imported module with existsSync from vite-node, which tc leaves
 // out of the test's reads. A test that imports a module without running it and also reads
@@ -71,4 +74,41 @@ it('gets the automock', () => {
 	writeProjectFile(t, projDir, "src/__mocks__/typed-dep.ts", "export function val(): string { return 'manual'; }\n")
 	assertExplainContains(t, projDir, target, "src/__mocks__/typed-dep.ts")
 	assertRunOutcome(t, projDir, target, runExpectation{summarySubstr: summaryOneRun, wantFailure: true})
+}
+
+// A config may fill in environment defaults while it loads. Assigning a key that already
+// exists, empty here as in many CI setups, went through tc's process.env wrapper as a bare
+// value descriptor, which process.env rejects: Vitest failed to start.
+func TestVitestConfigAssignsAnExistingEnvKey(t *testing.T) {
+	projDir := setupFullFixtureCopy(t)
+	t.Setenv("TC_EMPTY_IN_CI", "")
+	writeProjectFile(t, projDir, fileVitestConfig, `import { defineConfig } from 'vitest/config';
+process.env.TC_EMPTY_IN_CI ||= 'filled';
+export default defineConfig({
+  define: { __TC_FILLED__: JSON.stringify(process.env.TC_EMPTY_IN_CI) },
+  test: { environment: 'node' },
+});
+`)
+	const target = "tests/filled.test.ts"
+	writeProjectFile(t, projDir, target, `import { expect, it } from 'vitest';
+declare const __TC_FILLED__: string;
+it('sees the default the config filled in', () => { expect(__TC_FILLED__).toBe('filled'); });
+`)
+	assertRunsThenHits(t, projDir, target)
+}
+
+// When Vitest fails before running a file it was given, the summary says so instead of
+// counting those files as run, and the run fails.
+func TestVitestStartupFailureIsNotCountedAsRun(t *testing.T) {
+	projDir := setupFullFixtureCopy(t)
+	// Discovery loads this config fine; the run tc starts (it sets TESTCACHE_REPORT_FILE)
+	// fails before any file runs, the way a config error did in CI.
+	writeProjectFile(t, projDir, fileVitestConfig, `import { defineConfig } from 'vitest/config';
+if (process.env.TESTCACHE_REPORT_FILE) throw new Error('config fails to load');
+export default defineConfig({ test: { environment: 'node' } });
+`)
+	code, out, _ := runVitestFixture(t, projDir, false, targetATest)
+	if code == 0 || !strings.Contains(out, "given to Vitest, which reported no result") || strings.Contains(out, " 1 run,") {
+		t.Fatalf("a startup failure must fail and not count as run: code=%d out:\n%s", code, out)
+	}
 }

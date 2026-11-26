@@ -178,7 +178,7 @@ func (r *Runner) executeAndReport(ctx context.Context, plan executionPlan) (int,
 	_ = plan.env.store.RecordStats(int64(len(hits)), int64(runFiles), savedMs)
 	printRunSummary(plan.opts.Stdout, runSummary{
 		totalFiles: totalFiles, cachedFiles: len(hits), runFiles: runFiles, savedMs: savedMs,
-		shard: plan.parsed.Shard,
+		shard: plan.parsed.Shard, noReport: runFiles > 0 && !ran.known,
 	})
 	printCachedHint(plan.opts.Stdout, len(hits))
 	return exitCode, nil

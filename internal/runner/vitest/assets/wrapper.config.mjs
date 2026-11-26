@@ -495,6 +495,13 @@ async function recordEnvReads(fn) {
       noteKey(key);
       return Reflect.has(target, key);
     },
+    // Without this trap, assigning a key that exists (`process.env.X ||= 'a'` when X is
+    // empty) redefines it through the proxy with a bare value descriptor, which process.env
+    // rejects: "'process.env' only accepts a configurable, writable, and enumerable data
+    // descriptor".
+    set(target, key, value) {
+      return Reflect.set(target, key, value);
+    },
   });
   const setEnv = (value) =>
     Object.defineProperty(process, 'env', { value, configurable: true, writable: true, enumerable: true });

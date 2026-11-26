@@ -22,6 +22,9 @@ type runSummary struct {
 	runFiles    int
 	savedMs     int64
 	shard       shardSpec
+	// noReport is set when files went to Vitest and it reported none of them: it failed
+	// before running any, and "run" would claim otherwise.
+	noReport bool
 }
 
 // resultTally counts test files and tests by outcome. known is false when the numbers could
@@ -159,6 +162,10 @@ func printRunSummary(w io.Writer, s runSummary) {
 	prefix := "tc: "
 	if s.shard.active() {
 		prefix = "tc: shard " + s.shard.String() + ": "
+	}
+	if s.noReport {
+		fmt.Fprintf(w, "%s%d %s, %d cached, %d given to Vitest, which reported no result\n", prefix, s.totalFiles, fileWord, s.cachedFiles, s.runFiles)
+		return
 	}
 	if s.savedMs > 0 && s.savedMs < 1000 {
 		fmt.Fprintf(w, "%s%d %s, %d cached, %d run, saved %.2fs\n", prefix, s.totalFiles, fileWord, s.cachedFiles, s.runFiles, savedSec)
