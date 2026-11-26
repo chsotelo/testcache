@@ -17,6 +17,8 @@ function cleanModuleFile(raw) {
   const hIdx = p.indexOf('#');
   if (hIdx !== -1) p = p.slice(0, hIdx);
   if (!path.isAbsolute(p)) return null;
+  // A Vite virtual module ("\0virtual:x"), which Vitest 3 reports under the project root.
+  if (p.includes('\0') || p.includes('__x00__')) return null;
   return realpathSafe(p);
 }
 
@@ -107,6 +109,14 @@ function collectMainInputs(vitest, runtimeDir) {
   const mainGraph = vitest.vite?.environments?.__vitest__?.moduleGraph;
   for (const mod of mainGraph?.idToModuleMap?.values() || []) {
     raw.push(mod.file || mod.id);
+  }
+  // Vitest 3 runs globalSetup files (and what they import) through vite-node in this process.
+  // Not the ssr module graph: it also holds every module served to the workers.
+  for (const runner of [vitest.runner, ...toList(vitest.projects).map((project) => project.runner)]) {
+    const cache = runner?.moduleCache;
+    if (cache && typeof cache.keys === 'function') {
+      raw.push(...cache.keys());
+    }
   }
   const files = new Set();
   for (const item of raw) {

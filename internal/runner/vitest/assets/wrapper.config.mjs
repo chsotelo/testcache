@@ -37,7 +37,7 @@ if (!viteEntry) {
 }
 
 const viteMod = await import(/* @vite-ignore */ viteEntry);
-const { loadConfigFromFile, parseSync, parseAstAsync } = viteMod;
+const { loadConfigFromFile, parseSync, parseAstAsync, transformWithEsbuild } = viteMod;
 const { defineConfig } = await import(/* @vite-ignore */ vitestConfigEntry);
 
 function realpathSafe(p) {
@@ -96,10 +96,24 @@ async function parseSourceProgram(cleanId, code) {
     try {
       return await parseAstAsync(code);
     } catch {
-      return null;
+      // Vite 7 and older (Vitest 3) parse with Rollup, which reads JavaScript only: strip the
+      // TypeScript and JSX first. Bare imports, vi.mock calls and import.meta.glob survive it.
+      return parseStripped(cleanId, code);
     }
   }
   return null;
+}
+
+async function parseStripped(cleanId, code) {
+  if (typeof transformWithEsbuild !== 'function') {
+    return null;
+  }
+  try {
+    const stripped = await transformWithEsbuild(code, cleanId, { sourcemap: false });
+    return await parseAstAsync(stripped.code);
+  } catch {
+    return null;
+  }
 }
 
 function isImportMetaGlobCallee(callee) {
@@ -626,8 +640,10 @@ try {
 }
 // Read by tc-reporter.mjs when the run ends: what the config load consumed in this (main)
 // process, plus the loadEnv keys read after it (inside plugin hooks).
+// Vite 7 (Vitest 3) lists them relative to the current directory, Vite 8 as absolute paths.
+const configCwd = process.cwd();
 globalThis[CONFIG_LOAD_KEY] = {
-  dependencies: loaded?.dependencies || [],
+  dependencies: (loaded?.dependencies || []).map((dep) => path.resolve(configCwd, dep)),
   get envKeys() {
     return Array.from(envUse.keys).sort();
   },

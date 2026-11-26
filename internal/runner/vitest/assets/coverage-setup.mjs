@@ -150,6 +150,23 @@ function isExcludedPath(rp, repoRoot, runtimeDir) {
   return false;
 }
 
+const SELF_FILE = fileURLToPath(import.meta.url);
+const VITE_NODE_DIR = `${path.sep}node_modules${path.sep}vite-node${path.sep}`;
+
+// Vitest 3 loads modules in the worker through vite-node, which checks with existsSync that
+// each imported file exists. That is module loading, tracked through coverage, not a read by
+// the test: without this, every imported module would count as read, executed or not.
+function calledFromViteNode() {
+  const frames = (new Error().stack || '').split('\n');
+  for (let i = 1; i < frames.length; i++) {
+    if (frames[i].includes(SELF_FILE)) {
+      continue;
+    }
+    return frames[i].includes(VITE_NODE_DIR);
+  }
+  return false;
+}
+
 function recordFsPath(rawArg) {
   const active = state.active;
   if (!active) {
@@ -161,6 +178,10 @@ function recordFsPath(rawArg) {
   }
   const cacheKey = path.isAbsolute(p) ? p : `${process.cwd()}\0${p}`;
   if (active.seenRawPaths.has(cacheKey)) {
+    return;
+  }
+  // Not marked as seen: the test may still read the same path itself later.
+  if (calledFromViteNode()) {
     return;
   }
   active.seenRawPaths.add(cacheKey);
@@ -739,6 +760,11 @@ function normalizeScriptPath(rawUrl) {
     return null;
   }
   if (p.includes(`${path.sep}node_modules${path.sep}`)) {
+    return null;
+  }
+  // A Vite virtual module ("\0virtual:x"), which Vitest 3 reports under the project root. It
+  // is no file: its code comes from the config's plugins, already part of the key.
+  if (p.includes('\0') || p.includes('__x00__')) {
     return null;
   }
   p = realpathSafe(p);

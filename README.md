@@ -8,7 +8,7 @@
 - **Coverage-aware, not import-graph based.** Dependencies come from what each file executed at runtime (V8 coverage) plus the files it read, so a barrel file or an unexecuted branch does not invalidate everything that imports it.
 - **Zero changes to your repositories.** After a one-time install, `pnpm test`, `npx vitest run`, `pnpm vitest run src/x` and `vitest related --run` go through `tc` in every project, for you and for coding agents.
 - **Safe by default.** A file that spawns processes, opens network connections, reads files modified during the run, or runs with `isolate: false` is never cached. A small sample of hits is re-run to catch flaky or under-tracked tests, and `tc verify` re-checks the whole cache before a merge.
-- **A single Go binary**, standard library only. Works with Vitest 4.x and 5.x, npm, pnpm and yarn.
+- **A single Go binary**, standard library only. Works with Vitest 3.x, 4.x and 5.x, npm, pnpm and yarn.
 
 Example from a real 1,248-file suite: the full run takes about 5 minutes cold; after editing a few modules, the next full run took **19 s**, with 1,208 files replayed from the cache and 40 run.
 
@@ -20,7 +20,7 @@ tc: 156 files, 144 cached, 12 run, saved 183.2s
 
 ## Quick start
 
-Requirements: macOS or Linux (x64 or arm64), zsh or bash, Node, and a project using Vitest 4 or 5.
+Requirements: macOS or Linux (x64 or arm64), zsh or bash, Node, and a project using Vitest 3, 4 or 5.
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/chsotelo/testcache/main/scripts/get.sh | sh
@@ -456,7 +456,7 @@ What stays per checkout: the limit on concurrent Vitest runs (`maxConcurrentRuns
 - **`vitest related <sources> --run`** (what lint-staged and commit hooks run) is cached. A cached file is replayed when a source is the test, a file its passing run executed, or a file under one of its `import.meta.glob` directories; `package.json` and `vite.config.*`/`vitest.config.*` select every test, as Vitest's default `forceRerunTriggers` do. The files without a cached pass go to Vitest with the sources, and Vitest picks the ones that import a source. Two differences from plain Vitest, neither of which changes a result: a cached test that only imports a source without executing it is not listed, and custom `forceRerunTriggers` are not read, so a trigger of your own reruns only the uncached tests. When none of those is related, Vitest prints `No test files found` with the files it was given before `tc` lists the cached ones.
 - **Workspaces / browser mode**: multi-project `test.projects` configs and browser-mode tests run through `tc` but are never cached.
 - **Vitest's transform cache is off under `tc`**: on Vitest 5 a file that does have to run pays the full transform again instead of reading `node_modules/.vitest-cache`.
-- **Supported Vitest versions**: the whole end-to-end suite runs against 4.1.11 (`testdata/fixture-vitest`) and 5.1.1 (`testdata/fixture-vitest5`); select one with `TC_TEST_FIXTURE=<dir> go test ./...`. Other majors are not tested.
+- **Supported Vitest versions**: the whole end-to-end suite runs against 3.2.7 (`testdata/fixture-vitest3`), 4.1.11 (`testdata/fixture-vitest`) and 5.1.1 (`testdata/fixture-vitest5`); select one with `TC_TEST_FIXTURE=<dir> go test ./...`. Other majors are not tested.
 - **POSIX only**: process groups, signals and `flock` are used directly.
 
 ---

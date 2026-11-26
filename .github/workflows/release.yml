@@ -23,10 +23,12 @@ jobs:
         with:
           node-version: 24
 
-      - name: Tests (Vitest 4 and Vitest 5 fixtures)
+      - name: Tests (Vitest 3, 4 and 5 fixtures)
         run: |
+          (cd testdata/fixture-vitest3 && npm ci)
           (cd testdata/fixture-vitest && npm ci)
           (cd testdata/fixture-vitest5 && npm ci)
+          TC_TEST_FIXTURE=fixture-vitest3 go test ./...
           go test ./...
           TC_TEST_FIXTURE=fixture-vitest5 go test ./...
 
