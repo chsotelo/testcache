@@ -13,6 +13,10 @@ const (
 	gitdirPrefix     = "gitdir:"
 	gitCommonDirFile = "commondir"
 	checkoutIDLength = 8
+	// EnvRepoID names the repository explicitly, for checkouts whose path changes from one run
+	// to the next, such as a pool of CI runners that each clone into their own directory.
+	EnvRepoID       = "TESTCACHE_REPO_ID"
+	envRepoIDPrefix = "env:"
 )
 
 // ResolveRepoIdentity returns what identifies a repository whichever checkout tc runs in: the
@@ -21,6 +25,9 @@ const (
 // results; only the place they are stored has to be the same. Outside git, or when the git
 // files cannot be read, the checkout path itself is the identity, as before.
 func ResolveRepoIdentity(repoRoot string) string {
+	if id := strings.TrimSpace(os.Getenv(EnvRepoID)); id != "" {
+		return envRepoIDPrefix + id
+	}
 	dotGit := filepath.Join(repoRoot, gitEntryName)
 	info, err := os.Lstat(dotGit)
 	if err != nil {

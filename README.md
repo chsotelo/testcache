@@ -126,7 +126,7 @@ Install the binary only, and keep the cache directory between jobs with your CI'
 - run: ~/.local/bin/tc vitest run
 ```
 
-Each job restores the newest cache and saves its own under a new key. A fresh clone, a fresh `node_modules` and a new runner do not matter: keys are built from content and repo-relative paths, and the Node binary is identified by its version. The repository is identified by where its checkout lives, so the checkout path must be the same from one job to the next, as it is on GitHub Actions, GitLab CI and CircleCI. `CI=true` is part of every key, so CI and local runs keep separate entries. Pin a release with `TESTCACHE_VERSION=v1.2.3` in the environment of the install step.
+Each job restores the newest cache and saves its own under a new key. A fresh clone, a fresh `node_modules` and a new runner do not matter: keys are built from content and repo-relative paths, and the Node binary is identified by its version. The repository is identified by where its checkout lives, which is the same from one job to the next on GitHub-hosted runners, GitLab CI and CircleCI. A pool of self-hosted runners usually clones into a different directory per runner: set `TESTCACHE_REPO_ID` (for example to `${{ github.repository }}`) so every clone uses the same cache, and give `actions/cache` a `path` that is the same on every runner, since its cache version depends on it. `CI=true` is part of every key, so CI and local runs keep separate entries. Pin a release with `TESTCACHE_VERSION=v1.2.3` in the environment of the install step.
 
 ---
 
@@ -503,6 +503,7 @@ Example `testcache.json`:
 ## Cache Location & Bounds
 
 - **Cache root**: `~/.cache/testcache/` (overridable via `TESTCACHE_DIR`).
+- **Repository identity**: the git directory shared by a checkout and its worktrees, or the checkout path outside git. `TESTCACHE_REPO_ID` replaces it with a name of your choice, so clones at different paths share one cache (keys use repo-relative paths and content, so this is safe).
 - **Per-repo directory**: `~/.cache/testcache/<repo-id>/`, where `<repo-id>` is the first 16 bytes (32 hex chars) of SHA-256 of the repository's git directory: the one the main checkout and every `git worktree` of it share. Outside git it is the checkout path. See [Worktrees](#worktrees-share-one-cache).
 - **Layout**:
   - `entries/`, `deps/`, `discovery/`, `meta/`: cached outputs, dependency lists, discovery snapshots, `explain` metadata, and the main-process input records (`meta/config-*.json`).

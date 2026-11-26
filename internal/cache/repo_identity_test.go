@@ -85,3 +85,26 @@ func TestDepVariantsAreKeptNewestFirstAndBounded(t *testing.T) {
 		t.Fatalf("want %d variants at most, got %d", maxOlderDepVariants+1, got)
 	}
 }
+
+// A pool of CI runners clones into a different directory each time: TESTCACHE_REPO_ID names
+// the repository so that every clone uses the same cache directory.
+func TestRepoIdentityFromEnv(t *testing.T) {
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	first := filepath.Join(root, "runner-1", "repo")
+	second := filepath.Join(root, "runner-2", "repo")
+	mustWrite(t, filepath.Join(first, ".git", "HEAD"), "ref: refs/heads/main\n")
+	mustWrite(t, filepath.Join(second, ".git", "HEAD"), "ref: refs/heads/main\n")
+	if NewStore(root, first).RepoID == NewStore(root, second).RepoID {
+		t.Fatal("without TESTCACHE_REPO_ID two clones are two repositories")
+	}
+	t.Setenv(EnvRepoID, "org/repo")
+	if NewStore(root, first).RepoID != NewStore(root, second).RepoID {
+		t.Fatal("TESTCACHE_REPO_ID must give every clone the same cache directory")
+	}
+	if NewStore(root, first).CheckoutID == NewStore(root, second).CheckoutID {
+		t.Fatal("each checkout keeps its own id for what is not shared")
+	}
+}
