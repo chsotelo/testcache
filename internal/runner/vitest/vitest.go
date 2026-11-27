@@ -54,6 +54,15 @@ func (r *Runner) RunTests(ctx context.Context, opts runner.RunOptions) (int, err
 	if err != nil {
 		return 1, err
 	}
+	if parsed.Changed {
+		sources, err := changedFiles(ctx, env.proj.ProjectRoot, parsed.ChangedSince)
+		if err != nil {
+			// Vitest reports a missing repository or an unknown commit itself.
+			logVerbose(env.verbose, opts.Stderr, "changed: %v", err)
+			return r.runPassthrough(ctx, workDir, opts)
+		}
+		parsed.RelatedSources = sources
+	}
 	defer func() { _ = env.fileCache.Save() }()
 	env.attachTrace(opts.Trace)
 

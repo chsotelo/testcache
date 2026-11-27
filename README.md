@@ -55,7 +55,7 @@ The details are in [How cache keys are computed](#how-cache-keys-are-computed), 
 | [vite-plugin-vitest-cache](https://github.com/raegen/vite-plugin-vitest-cache) | test files whose bundled code is unchanged; Vitest still starts | hash of each test file built by Vite | a plugin in each Vitest config |
 | **testcache** | test files whose recorded inputs are unchanged; a full hit never starts Node | files each test executed (V8 coverage) and read, env vars it read, config, lockfile, versions | one install per machine |
 
-They also combine: `tc vitest related --run src/a.ts` replays the related files that are cached and runs the rest.
+They also combine: `tc vitest related --run src/a.ts` replays the related files that are cached and runs the rest, and so does `tc vitest run --changed <commit>`.
 
 ---
 
@@ -133,6 +133,8 @@ Each job restores the newest cache and saves its own under a new key. A fresh cl
 
 **Which cache a run starts from.** On GitHub Actions a cache saved by a pull request is visible to later runs of that pull request only; a new pull request sees the caches of its base branch. If the workflow runs on pull requests only, every first run of a pull request is cold. Run it on pushes to the base branch too (`on: push: branches: [main]`): that run is incremental, since it starts from the previous push's cache, and it stores the cache every new pull request starts from. Only code that reached the base branch writes that shared cache: a pull request cannot put results into another one's.
 
+**Only the tests a change affects.** A workflow that runs `vitest run --changed <base>` can run `tc vitest run --changed <base>` instead. tc lists the changed files the way Vitest's git provider does (changed since the merge base with `<base>`, staged, modified and untracked) and takes the `related` path: the affected files with a cached pass are replayed, and the others go to Vitest, which picks the affected ones among them. A cold run therefore runs what `--changed` runs. On a later push of the same pull request, with the cache of the previous run restored, an affected file runs only if its inputs changed since its cached pass, where plain `--changed <base>` reruns everything affected since the base. The run goes to Vitest uncached with test filters, without `run` or `--run`, with an empty `--changed=` or a `true`/`false`/`yes`/`no` value, and when git fails (no repository, unknown commit), so Vitest reports it. A custom `vcsProvider` (Vitest 4 and later) is not consulted: tc asks git.
+
 **Shards.** `tc vitest run --shard=<index>/<count>` gives each shard the files Vitest's default sequencer would give it: the files sorted by the SHA-1 of their path, cut into `count` ranges (Vitest 3 and Vitest 4+ cut them differently, and tc follows the installed version). Each shard replays its own cached files and hands only its own uncached ones to Vitest, as a file list without `--shard`. The split depends on the file list alone, never on what a shard has cached, so the shards cover every file exactly once even when their caches differ. `--shard` is not part of any key: a result stored by one shard serves another one, a run without shards and a local run alike. With more shards than files tc hands the run to Vitest unchanged, which reports the error. A config with its own sequencer (`sequence.sequencer`) gets the default split: every file is still covered exactly once, but a shard may hold other files than that sequencer would give it. Keep one cache per shard:
 
 ```yaml
@@ -161,6 +163,7 @@ tc vitest [vitest args] [files...]
 tc vitest tests/a.test.ts
 tc vitest run -t "adds" tests/
 tc vitest related --run src/a.ts           # the tests that import src/a.ts, cached too
+tc vitest run --changed origin/main        # the tests affected since origin/main, cached too
 tc vitest --no-cache tests/a.test.ts       # bypass cache read/write (like Go's -count=1)
 tc vitest --no-revalidate tests/a.test.ts  # disable revalidation sampling for one run
 TC_VERBOSE=1 tc vitest                     # print per-phase timings and counts to stderr
@@ -474,7 +477,7 @@ What stays per checkout: the limit on concurrent Vitest runs (`maxConcurrentRuns
 - **Glob contents during a run**: `import.meta.glob` listings are compared before and after the run, but files matched by a glob with a `query` are not checked against the two-second rule.
 - **`tc` killed by `SIGKILL` while queued or running**: nothing is cached and locks are released by the kernel; Vitest stops through its parent watchdog (see above). A test that itself detaches a child into another process group can leave that child behind.
 - **Arguments after a bare `--`** are dropped, as Vitest itself ignores them.
-- **Passthrough flags & subcommands**: `--watch`/`-w`, `--ui`, `--update`/`-u`, `--coverage`, `--typecheck`, `--changed`, `--lastFailed`, `--sinceLastRun`, `--fsModuleCache`, `--browser`, `--mergeReports`, `--no-isolate`, `--isolate=false`, `--help`, `--version`, and subcommands `watch`, `bench`, `list`, `typecheck`, `init` pass directly through to Vitest uncached, and so does `related` without `--run` (it watches on a terminal).
+- **Passthrough flags & subcommands**: `--watch`/`-w`, `--ui`, `--update`/`-u`, `--coverage`, `--typecheck`, `--lastFailed`, `--sinceLastRun`, `--fsModuleCache`, `--browser`, `--mergeReports`, `--no-isolate`, `--isolate=false`, `--help`, `--version`, and subcommands `watch`, `bench`, `list`, `typecheck`, `init` pass directly through to Vitest uncached, and so do `related` and `--changed` without `run`/`--run` (they watch on a terminal).
 - **`vitest related <sources> --run`** (what lint-staged and commit hooks run) is cached. A cached file is replayed when a source is the test, a file its passing run executed, or a file under one of its `import.meta.glob` directories; `package.json` and `vite.config.*`/`vitest.config.*` select every test, as Vitest's default `forceRerunTriggers` do. The files without a cached pass go to Vitest with the sources, and Vitest picks the ones that import a source. Two differences from plain Vitest, neither of which changes a result: a cached test that only imports a source without executing it is not listed, and custom `forceRerunTriggers` are not read, so a trigger of your own reruns only the uncached tests. When none of those is related, Vitest prints `No test files found` with the files it was given before `tc` lists the cached ones.
 - **Workspaces / browser mode**: multi-project `test.projects` configs and browser-mode tests run through `tc` but are never cached.
 - **Vitest's transform cache is off under `tc`**: on Vitest 5 a file that does have to run pays the full transform again instead of reading `node_modules/.vitest-cache`.

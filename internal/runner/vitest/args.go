@@ -29,6 +29,11 @@ type ParsedArgs struct {
 	// source, and the positionals are those sources instead of test filters.
 	Related        bool
 	RelatedSources []string
+	// Changed is `--changed [since]`, which Vitest runs as `related` with the files git reports
+	// as changed. tc lists those files itself (see changedFiles) and takes the related path; a
+	// custom vcsProvider in the config is not consulted.
+	Changed      bool
+	ChangedSince string
 	// Shard is `--shard <index>/<count>`, which tc applies itself to the full file list (see
 	// ownedByShard); it is neither passed to Vitest nor part of a cache key.
 	Shard          shardSpec
@@ -64,7 +69,7 @@ var bypassFlags = map[string]bool{
 	"--clearCache": true, "--listTags": true,
 	"--mergeReports": true, "--update": true, "-u": true,
 	"--coverage": true, "--typecheck": true,
-	"--changed": true, "--standalone": true,
+	"--standalone": true,
 	"--no-isolate": true,
 	"--browser":    true,
 	// Vitest 5: Vitest picks the files from its own record of earlier runs, and tc would
@@ -110,7 +115,16 @@ func ParseArgs(args []string) ParsedArgs {
 		}
 		i = parseFlag(&out, args, i)
 	}
-	// Without --run, `vitest related` watches on a terminal: leave it to Vitest.
+	if out.Changed {
+		// Vitest narrows the filtered files to the affected ones; tc's related path takes no
+		// filters, and `related --changed` is not a combination tc models.
+		if out.Related || len(out.Positionals) > 0 {
+			out.BypassCache = true
+		}
+		out.Related = true
+	}
+	// Without run or --run, `vitest related` and `--changed` watch on a terminal: leave them
+	// to Vitest.
 	if out.Related && !scan.sawRun {
 		out.BypassCache = true
 	}
@@ -142,6 +156,7 @@ func (s *argScan) consumeWord(out *ParsedArgs, arg string) bool {
 	}
 	switch {
 	case arg == string(subcommandRun):
+		s.sawRun = true
 	case arg == string(subcommandRelated):
 		out.Related = true
 	case bypassSubcommands[arg]:
@@ -165,6 +180,9 @@ func (p *ParsedArgs) addPositional(arg string) {
 func parseFlag(out *ParsedArgs, args []string, i int) int {
 	arg := args[i]
 	name, val, hasEq := strings.Cut(arg, "=")
+	if name == "--changed" {
+		return parseChanged(out, args, i, val, hasEq)
+	}
 	if bypassFlags[name] {
 		out.BypassCache = true
 	}
@@ -208,6 +226,24 @@ func parseFlag(out *ParsedArgs, args []string, i int) int {
 		out.ForwardFlags = append(out.ForwardFlags, val)
 	}
 	appendFlagLists(out, flagRecord{name: name, arg: arg, val: val, consumedNext: consumedNext})
+	return i
+}
+
+// parseChanged reads `--changed [since]`. Like Vitest's CLI, it takes the next word as the
+// commit or branch unless that word is a flag. The flag is neither forwarded nor part of a
+// cache key: tc hands Vitest the changed files instead (see changedFiles).
+func parseChanged(out *ParsedArgs, args []string, i int, val string, hasEq bool) int {
+	if !hasEq && i+1 < len(args) && !strings.HasPrefix(args[i+1], "-") {
+		i++
+		val = args[i]
+	}
+	switch {
+	case hasEq && val == "", val == "true", val == "false", val == "yes", val == "no":
+		// Vitest reads these spellings in ways tc does not model: leave them to Vitest.
+		out.BypassCache = true
+	}
+	out.Changed = true
+	out.ChangedSince = val
 	return i
 }
 
